@@ -10,7 +10,7 @@ from openpyxl.styles import PatternFill
 
 st.set_page_config(page_title="Rekap Catatan Stok", layout="wide")
 
-st.title("📝 Aplikasi Rekap Catatan Stok Otomatis")
+st.title("📝 Aplikasi Rekap Catatan MUSNAH")
 st.write("Upload banyak gambar catatan sekaligus dan file MASTER STOK Anda di sini.")
 
 with st.sidebar:
@@ -86,7 +86,6 @@ def apply_grouping(df_results, max_sum=495000):
         df_results.at[index, 'Kelompok'] = current_group
     return df_results
 
-# Fungsi untuk Web Streamlit
 def color_groups(row):
     colors = ['#e6f2ff', '#e6ffe6', '#ffffe6', '#ffe6e6', '#f9e6ff', '#e6ffff', '#fff0e6']
     color = colors[(row['Kelompok'] - 1) % len(colors)]
@@ -123,7 +122,7 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                       {
                         "plu_tulis": "KODE PLU (angka di kolom pertama)",
                         "deskripsi": "Deskripsi barang",
-                        "qty_expr": "Operasi matematika di kolom terakhir (jangan dihitung, tulis aslinya misal '4.722+0.380+2126')"
+                        "qty_expr": "Operasi matematika di kolom terakhir (jangan dihitung, tulis aslinya misal '0.146' atau '0.602')"
                       }
                     ]
                     Hanya berikan JSON murni.
@@ -136,14 +135,15 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                         desk = str(item.get('deskripsi', '')).strip()
                         qty_asli = str(item.get('qty_expr', '')).strip()
                         
-                        # 1. Hilangkan titik pada QTY
-                        qty_clean = qty_asli.replace('.', '')
+                        # PERBAIKAN QTY: Ubah format 0.146 atau 0.602 menjadi 146 dan 602 (abaikan titik setelah angka 0)
+                        qty_fixed_decimals = re.sub(r'\b0\.(\d+)', r'\1', qty_asli)
+                        qty_clean = qty_fixed_decimals.replace('.', '')
+                        
                         is_pck = bool(re.search(r'\b(pcs|pck)\b', qty_clean.lower()) or re.search(r'\b(pcs|pck)\b', desk.lower()))
                         
-                        # 2. Hitung dengan mengabaikan angka 0 di depan (mengubah 0380 jadi 380)
                         try:
                             clean_expr = re.sub(r'[^\d+\-*/ ]', '', qty_clean)
-                            clean_expr = re.sub(r'\b0+(\d)', r'\1', clean_expr) # Hapus 0 di depan angka
+                            clean_expr = re.sub(r'\b0+(\d)', r'\1', clean_expr)
                             total_qty = eval(clean_expr) if clean_expr.strip() else 0
                         except:
                             total_qty = 0
@@ -160,7 +160,8 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                                 'PLU Tulis': plu,
                                 'Deskripsi Catatan': desk,
                                 'Qty Catatan': qty_asli,
-                                'Total Qty': total_qty, # KOLOM BARU TOTAL QTY
+                                'Total Qty': total_qty,
+                                'PLU Master': str(match['PLU']), # KOLOM BARU PLU MASTER
                                 'Deskripsi Master': match['DESKRIPSI'],
                                 'Unit': match['UNIT'],
                                 'Stok System': match['STOK'],
@@ -171,7 +172,7 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                             results.append({
                                 'Kelompok': 0, 'PLU Tulis': plu, 'Deskripsi Catatan': desk, 
                                 'Qty Catatan': qty_asli, 'Total Qty': total_qty,
-                                'Deskripsi Master': 'TIDAK DITEMUKAN', 
+                                'PLU Master': '-', 'Deskripsi Master': 'TIDAK DITEMUKAN', 
                                 'Unit': '-', 'Stok System': 0, 'Total Rupiah': 0.0,
                                 'Sumber Gambar': img_file.name
                             })
@@ -181,14 +182,12 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                 
                 st.success("Berhasil memproses seluruh gambar!")
                 
-                # Tampilkan di Web (dengan format titik)
                 st.dataframe(df_result.style.apply(color_groups, axis=1).format({
                     'Total Qty': format_indo, 
                     'Stok System': format_indo,
                     'Total Rupiah': format_rupiah
                 }), use_container_width=True)
                 
-                # EXCEL EXPORT (DENGAN WARNA DAN FORMAT ANGKA)
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df_result.to_excel(writer, index=False, sheet_name='Rekap')
@@ -196,11 +195,9 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                     workbook = writer.book
                     worksheet = writer.sheets['Rekap']
                     
-                    # Daftar kode warna HEX untuk Excel
                     hex_colors = ['E6F2FF', 'E6FFE6', 'FFFFE6', 'FFE6E6', 'F9E6FF', 'E6FFFF', 'FFF0E6']
                     fills = [PatternFill(start_color=c, end_color=c, fill_type='solid') for c in hex_colors]
                     
-                    # Memproses setiap baris untuk mewarnai dan memberi titik pemisah
                     for row_idx, row in enumerate(df_result.itertuples(), start=2): 
                         group_num = row.Kelompok
                         fill = fills[(group_num - 1) % len(fills)]
@@ -209,10 +206,9 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                             cell = worksheet.cell(row=row_idx, column=col_idx)
                             cell.fill = fill
                             
-                            # Format angka agar bisa dijumlahkan di Excel namun tetap memiliki pemisah
                             col_name = df_result.columns[col_idx - 1]
                             if col_name in ['Total Qty', 'Stok System']:
-                                cell.number_format = '#,##0' # Format Ribuan Excel
+                                cell.number_format = '#,##0'
                             elif col_name == 'Total Rupiah':
                                 cell.number_format = '"Rp" #,##0'
                                 
@@ -221,7 +217,7 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                 st.download_button(
                     label="📥 Download Hasil Excel (Berwarna)",
                     data=output,
-                    file_name="Hasil_Rekap_Dikelompokkan_V3.xlsx",
+                    file_name="Hasil_Rekap_Dikelompokkan_V4.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
