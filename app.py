@@ -36,13 +36,24 @@ def get_smarter_match(plu_tulis, deskripsi_tulis, is_pck, df_master):
         df_sub['Unit_Match'] = df_sub['UNIT'].isin(pck_units).astype(int) if is_pck else 1
         return df_sub.sort_values(by=['Has_Stock', 'Unit_Match'], ascending=[False, False]).iloc[0]
 
-    exact_plu = df_master[df_master['PLU'] == plu_bersih]
-    if not exact_plu.empty: return evaluate(exact_plu)
-        
-    if len(plu_bersih) >= 5:
-        sim_plu = df_master[df_master['PLU'].str.contains(plu_bersih, na=False)]
-        if not sim_plu.empty: return evaluate(sim_plu)
+    # ==========================================
+    # PRIORITAS 1: COCOKKAN BERDASARKAN PLU DULU
+    # =================-=========================
+    if plu_bersih and plu_bersih != 'nan' and plu_bersih != '-':
+        # 1A. Exact PLU (Sama persis)
+        exact_plu = df_master[df_master['PLU'] == plu_bersih]
+        if not exact_plu.empty: 
+            return evaluate(exact_plu)
             
+        # 1B. Similar PLU (Mengandung angka tersebut atau mirip)
+        if len(plu_bersih) >= 4:
+            sim_plu = df_master[df_master['PLU'].str.contains(plu_bersih, na=False)]
+            if not sim_plu.empty: 
+                return evaluate(sim_plu)
+
+    # ==========================================
+    # PRIORITAS 2: JIKA PLU TIDAK KETEMU, BARU PAKAI DESKRIPSI
+    # ==========================================
     if desk_tulis.startswith('B/O') or desk_tulis.startswith('BO '):
         df_bo = df_master[df_master['DESKRIPSI'].str.contains('BUAH OLAHAN', na=False, case=False)]
         if 'MIX' in desk_tulis:
@@ -101,7 +112,7 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
     if not api_key or not master_file or not image_files:
         st.error("⚠️ Pastikan API Key, File Excel, dan setidaknya satu Gambar telah diunggah!")
     else:
-        with st.spinner(f'Memproses {len(image_files)} gambar...'):
+        with st.spinner(f'Memproses {len(image_files)} gambar berdasarkan PLU...'):
             try:
                 genai.configure(api_key=api_key)
                 model = genai.GenerativeModel('gemini-3.5-flash')
@@ -122,7 +133,7 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                       {
                         "plu_tulis": "KODE PLU (angka di kolom pertama)",
                         "deskripsi": "Deskripsi barang",
-                        "qty_expr": "Operasi matematika di kolom terakhir (jangan dihitung, tulis aslinya misal '0.146' atau '0.602')"
+                        "qty_expr": "Operasi matematika di kolom terakhir (misal '0.146' atau '4.722+0.380+2126')"
                       }
                     ]
                     Hanya berikan JSON murni.
@@ -135,7 +146,6 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                         desk = str(item.get('deskripsi', '')).strip()
                         qty_asli = str(item.get('qty_expr', '')).strip()
                         
-                        # PERBAIKAN QTY: Ubah format 0.146 atau 0.602 menjadi 146 dan 602 (abaikan titik setelah angka 0)
                         qty_fixed_decimals = re.sub(r'\b0\.(\d+)', r'\1', qty_asli)
                         qty_clean = qty_fixed_decimals.replace('.', '')
                         
@@ -148,6 +158,7 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                         except:
                             total_qty = 0
                         
+                        # Pencocokan mendahulukan PLU
                         match = get_smarter_match(plu, desk, is_pck, df_master)
                         
                         if match is not None:
@@ -161,7 +172,7 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                                 'Deskripsi Catatan': desk,
                                 'Qty Catatan': qty_asli,
                                 'Total Qty': total_qty,
-                                'PLU Master': str(match['PLU']), # KOLOM BARU PLU MASTER
+                                'PLU Master': str(match['PLU']),
                                 'Deskripsi Master': match['DESKRIPSI'],
                                 'Unit': match['UNIT'],
                                 'Stok System': match['STOK'],
@@ -180,7 +191,7 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                 df_result = pd.DataFrame(results)
                 df_result = apply_grouping(df_result, max_sum=495000)
                 
-                st.success("Berhasil memproses seluruh gambar!")
+                st.success("Berhasil memproses seluruh gambar berdasarkan prioritas PLU!")
                 
                 st.dataframe(df_result.style.apply(color_groups, axis=1).format({
                     'Total Qty': format_indo, 
@@ -217,7 +228,7 @@ if st.button("🚀 Proses Semua Gambar Sekarang", use_container_width=True):
                 st.download_button(
                     label="📥 Download Hasil Excel (Berwarna)",
                     data=output,
-                    file_name="Hasil_Rekap_Dikelompokkan_V4.xlsx",
+                    file_name="Hasil_Rekap_PrioritasPLU.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
