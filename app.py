@@ -11,7 +11,7 @@ st.set_page_config(page_title="Rekap Catatan Stok", layout="wide")
 st.title("📝 Aplikasi Rekap Catatan Stok Otomatis")
 st.write("Upload gambar catatan tangan dan file MASTER STOK Anda di sini.")
 
-# Input API Key di sidebar agar rapi
+# Input API Key di sidebar
 with st.sidebar:
     st.header("Pengaturan")
     api_key = st.text_input("Masukkan Gemini API Key", type="password")
@@ -33,6 +33,44 @@ def calculate_qty(qty_expr):
     except Exception:
         return 0
 
+def cari_kecocokan(plu_tulis, desk_tulis, df_master):
+    # Bersihkan spasi dan huruf yang mirip angka pada PLU
+    plu_bersih = str(plu_tulis).replace('O', '0').replace('o', '0').replace('D', '0').replace(' ', '').strip()
+    
+    # Tahap 1: Pencarian PLU Sama Persis
+    match_plu = df_master[df_master['PLU'] == plu_bersih]
+    if not match_plu.empty:
+        return match_plu.iloc[0]['PLU'], match_plu.iloc[0]['DESKRIPSI'], "✅ Cocok (Dari PLU)"
+        
+    # Tahap 2: Pencarian Sebagian Angka PLU (jika angka agak terpotong)
+    if len(plu_bersih) >= 4:
+        match_contain = df_master[df_master['PLU'].str.contains(plu_bersih, na=False)]
+        if not match_contain.empty:
+            return match_contain.iloc[0]['PLU'], match_contain.iloc[0]['DESKRIPSI'], "✅ Cocok (PLU Mirip)"
+            
+    # Tahap 3: PENCARIAN PINTAR BERDASARKAN NAMA BARANG
+    desk_clean = str(desk_tulis).upper()
+    # Ambil kata-kata penting yang panjangnya lebih dari 2 huruf (mengabaikan singkatan seperti 'B', 'BO')
+    kata_kunci = [k for k in re.findall(r'[A-Z]+', desk_clean) if len(k) > 2]
+    
+    if kata_kunci:
+        def hitung_skor(teks_master):
+            teks_master = str(teks_master).upper()
+            # Hitung berapa banyak kata kunci dari catatan yang ada di Master Excel
+            skor = sum(1 for k in kata_kunci if k in teks_master)
+            return skor
+            
+        skor_semua = df_master['DESKRIPSI'].apply(hitung_skor)
+        skor_maksimal = skor_semua.max()
+        
+        # Jika sistem menemukan kecocokan kata (misal: tulisan "B Bombay" menemukan kata "BOMBAY" di Master)
+        if skor_maksimal > 0:
+            baris_terbaik = df_master.loc[skor_semua.idxmax()]
+            return baris_terbaik['PLU'], baris_terbaik['DESKRIPSI'], "⚠️ Cocok (Dari Nama/Teks)"
+
+    # Tahap 4: Gagal menemukan sama sekali
+    return plu_tulis, f"{desk_tulis} (TIDAK DITEMUKAN)", "❌ Tidak Cocok"
+
 if st.button("🚀 Proses Data Sekarang", use_container_width=True):
     if not api_key:
         st.error("⚠️ Masukkan Gemini API Key terlebih dahulu di menu samping!")
@@ -41,9 +79,10 @@ if st.button("🚀 Proses Data Sekarang", use_container_width=True):
     else:
         with st.spinner('Sedang membaca gambar dan mencocokkan data... Mohon tunggu...'):
             try:
-                # 1. Konfigurasi AI
+                # 1. Konfigurasi AI 
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-3.6-flash')
+                # Menggunakan model 1.5-flash karena lebih cepat dan sangat stabil
+                model = genai.GenerativeModel('gemini-1.5-flash')
                 
                 # 2. Baca Gambar
                 img = Image.open(image_file)
@@ -58,7 +97,7 @@ if st.button("🚀 Proses Data Sekarang", use_container_width=True):
                     "qty_expr": "Operasi matematika di kolom terakhir (misal: '395 + 135 + 400', '120')"
                   }
                 ]
-                Hanya berikan JSON murni, tanpa backticks atau teks penjelasan apapun.
+                Pastikan huruf besar/kecil sesuai gambar. Hanya berikan JSON murni, tanpa teks penjelasan apapun.
                 """
                 
                 response = model.generate_content([img, prompt])
@@ -68,6 +107,7 @@ if st.button("🚀 Proses Data Sekarang", use_container_width=True):
                 # 3. Baca Excel
                 df_master = pd.read_excel(master_file, sheet_name=0)
                 df_master['PLU'] = df_master['PLU'].astype(str).str.strip()
+                df_master['DESKRIPSI'] = df_master['DESKRIPSI'].fillna('')
                 
                 # 4. Proses Pencocokan
                 results = []
@@ -78,26 +118,15 @@ if st.button("🚀 Proses Data Sekarang", use_container_width=True):
                     
                     total_qty = calculate_qty(qty_expr)
                     
-                    plu_bersih = plu_tulis.replace('O', '0').replace('o', '0').replace('D', '0')
-                    match = df_master[df_master['PLU'] == plu_bersih]
-                    
-                    if match.empty and len(plu_bersih) >= 4:
-                        match = df_master[df_master['PLU'].str.contains(plu_bersih, na=False)]
-                        
-                    if not match.empty:
-                        plu_final = match.iloc[0]['PLU']
-                        desk_final = match.iloc[0]['DESKRIPSI']
-                        status = "✅ Cocok"
-                    else:
-                        plu_final = plu_tulis
-                        desk_final = f"{desk_tulis} (TIDAK DITEMUKAN)"
-                        status = "❌ Tidak Cocok"
+                    # PANGGIL FUNGSI PENCOCOKAN PINTAR
+                    plu_final, desk_final, status = cari_kecocokan(plu_tulis, desk_tulis, df_master)
                         
                     results.append({
                         'PLU Master': plu_final,
                         'Deskripsi Master': desk_final,
                         'Total Qty': total_qty,
                         'Status': status,
+                        'Tulisan Asli (PLU - Nama)': f"{plu_tulis} - {desk_tulis}",
                         'Hitungan Asli': qty_expr
                     })
                 
