@@ -82,7 +82,7 @@ if st.button("🚀 Proses Data Sekarang", use_container_width=True):
                 # 1. Konfigurasi AI 
                 genai.configure(api_key=api_key)
                 # Menggunakan model 1.5-flash karena lebih cepat dan sangat stabil
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                model = genai.GenerativeModel('gemini-3.5-flash')
                 
                 # 2. Baca Gambar
                 img = Image.open(image_file)
