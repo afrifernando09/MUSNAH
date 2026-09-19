@@ -43,7 +43,7 @@ if st.button("🚀 Proses Data Sekarang", use_container_width=True):
             try:
                 # 1. Konfigurasi AI
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-3.1-pro')
+                model = genai.GenerativeModel('gemini-3.6-flash')
                 
                 # 2. Baca Gambar
                 img = Image.open(image_file)
